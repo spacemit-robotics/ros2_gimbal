@@ -29,15 +29,6 @@ extern "C" {
 
 namespace {
 
-struct GimbalUdpConfig
-{
-    const char * bind_ip;
-    uint16_t bind_port;
-    const char * device_ip;
-    uint16_t device_port;
-    float resend_period_s;
-};
-
 using GimbalEulerMsg = control_gimbal_node::msg::GimbalEuler;
 using GimbalStateMsg = control_gimbal_node::msg::GimbalState;
 
@@ -125,7 +116,7 @@ public:
     GimbalServerNode()
     : rclcpp::Node("gimbal_server_node")
     {
-    driver_name_ = declare_parameter<std::string>("driver_name", "drv_udp_TZ0xxx");
+    driver_name_ = declare_parameter<std::string>("driver_name", "drv_udp_tz0xxx");
     bind_ip_ = declare_parameter<std::string>("bind_ip", "0.0.0.0");
     bind_port_ = declare_parameter<int>("bind_port", 4900);
     device_ip_ = declare_parameter<std::string>("device_ip", "192.168.44.160");
@@ -147,7 +138,7 @@ public:
         declare_parameter<std::vector<double>>("max_speed_deg_s", {50.0, 50.0, 50.0}),
         "max_speed_deg_s");
 
-    GimbalUdpConfig cfg{};
+    gimbal_udp_config_t cfg{};
     cfg.bind_ip = bind_ip_.c_str();
     cfg.bind_port = static_cast<uint16_t>(bind_port_);
     cfg.device_ip = device_ip_.c_str();
@@ -322,22 +313,20 @@ private:
     std::shared_ptr<control_gimbal_node::srv::SetGimbalTarget::Response> response)
     {
     const gimbal_euler_t requested = to_native(request->target);
-    const int rc = gimbal_set_target(dev_, &requested);
-    if (rc == GIMBAL_OK) {
-        if (current_mode_ == GIMBAL_MODE_ANGLE_REL) {
+    gimbal_euler_t cached_target = requested;
+    if (current_mode_ == GIMBAL_MODE_ANGLE_REL) {
         gimbal_euler_t angle{};
         if (gimbal_get_state(dev_, &angle, nullptr) == GIMBAL_OK) {
-            gimbal_euler_t effective = angle;
-            effective.pitch += requested.pitch;
-            effective.yaw += requested.yaw;
-            effective.roll += requested.roll;
-            last_target_ = clamp_target(current_mode_, effective);
-        } else {
-            last_target_ = requested;
+        cached_target.pitch += angle.pitch;
+        cached_target.yaw += angle.yaw;
+        cached_target.roll += angle.roll;
         }
-        } else {
-        last_target_ = clamp_target(current_mode_, requested);
-        }
+    }
+    cached_target = clamp_target(current_mode_, cached_target);
+
+    const int rc = gimbal_set_target(dev_, &requested);
+    if (rc == GIMBAL_OK) {
+        last_target_ = cached_target;
         has_target_ = true;
     }
     fill_response(response, rc);

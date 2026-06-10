@@ -27,7 +27,7 @@ digraph G {
         style = dashed;
         color = "#7f8c8d";
 
-        UDP_DRV [label="{ drv_udp_TZ0xxx.c | {open_udp_socket() | set_mode/set_target/set_zoom | recvfrom() + parse_status_feedback() | speed 模式命令重发} }", shape=record, fillcolor="#f5f5f5", color="#7f8c8d"];
+        UDP_DRV [label="{ drv_udp_tz0xxx.c / drv_udp_c12.c | {open_udp_socket() | set_mode/set_target/set_zoom | recvfrom() + parse_status_feedback() | speed 模式命令重发} }", shape=record, fillcolor="#f5f5f5", color="#7f8c8d"];
     }
 
     UDP_IO [label="UDP Socket\nbind_ip:bind_port\n<-> device_ip:device_port", shape=note];

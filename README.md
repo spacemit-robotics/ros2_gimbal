@@ -2,7 +2,7 @@
 
 `control_gimbal_node` 是一个 ROS 2 云台控制节点，基于仓库内的底层 `components/control/gimbal` C 驱动封装而成。
 
-当前节点默认对接 `drv_udp_TZ0xxx` UDP 驱动，并在包内直接提供统一的 ROS 2 消息与服务接口。
+当前节点默认对接 `drv_udp_tz0xxx` UDP 驱动，并在包内直接提供统一的 ROS 2 消息与服务接口。
 
 ## 功能概览
 
@@ -55,12 +55,14 @@ middleware/ros2/control/gimbal/
 
 ### 底层驱动依赖
 
-默认驱动名：`drv_udp_TZ0xxx`
+默认驱动名：`drv_udp_tz0xxx`
+
+支持的驱动名：`drv_udp_tz0xxx`、`drv_udp_c12`。
 
 如果运行时报错：
 
 ```text
-[GIMBAL] Driver not found: drv_udp_TZ0xxx
+[GIMBAL] Driver not found: drv_udp_tz0xxx
 ```
 
 通常说明可执行文件没有正确链接驱动实现，或者底层 `gimbal` 组件没有按预期安装/编译。
@@ -133,7 +135,43 @@ ros2 run control_gimbal_node gimbal_server_node \
 正常启动后，终端会输出节点 ready 日志，类似：
 
 ```text
-gimbal_server_node ready: driver=drv_udp_TZ0xxx local=0.0.0.0:4900 remote=192.168.44.160:4900
+gimbal_server_node ready: driver=drv_udp_tz0xxx local=0.0.0.0:4900 remote=192.168.44.160:4900
+```
+
+### C12 运行示例
+
+C12 驱动不是默认驱动，运行时需要显式指定 `driver_name:=drv_udp_c12`。C12 默认控制地址为
+`192.168.144.108:5000`，本地建议绑定 `5000` 端口：
+
+```bash
+cd /path/to/robotic_sdk
+source /opt/ros/humble/setup.bash
+source output/staging/setup.bash
+
+ros2 run control_gimbal_node gimbal_server_node \
+  --ros-args \
+  -p driver_name:=drv_udp_c12 \
+  -p bind_ip:=0.0.0.0 \
+  -p bind_port:=5000 \
+  -p device_ip:=192.168.144.108 \
+  -p device_port:=5000
+```
+
+正常启动后，ready 日志应包含 C12 驱动和 5000 端口：
+
+```text
+gimbal_server_node ready: driver=drv_udp_c12 local=0.0.0.0:5000 remote=192.168.144.108:5000
+```
+
+C12 直连调试时，主机网口需要和设备处于同一网段。例如：
+
+```bash
+#以实际接入网口为准
+ifconfig eth0 192.168.144.100 netmask 255.255.255.0 up
+
+#基于buildroot系统，需要额外加上路由
+route add -net 192.168.144.0 netmask 255.255.255.0 dev eth0
+ping 192.168.144.108
 ```
 
 ## 参数说明
@@ -142,7 +180,7 @@ gimbal_server_node ready: driver=drv_udp_TZ0xxx local=0.0.0.0:4900 remote=192.16
 
 | 参数名 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `driver_name` | `string` | `drv_udp_TZ0xxx` | 底层驱动名称 |
+| `driver_name` | `string` | `drv_udp_tz0xxx` | 底层驱动名称，可选 `drv_udp_tz0xxx` 或 `drv_udp_c12` |
 | `bind_ip` | `string` | `0.0.0.0` | 本地绑定 IP |
 | `bind_port` | `int` | `4900` | 本地绑定端口 |
 | `device_ip` | `string` | `192.168.44.160` | 云台设备 IP |
@@ -161,6 +199,8 @@ gimbal_server_node ready: driver=drv_udp_TZ0xxx local=0.0.0.0:4900 remote=192.16
 
 - `min_angle_deg`、`max_angle_deg`、`max_speed_deg_s` 支持长度为 3 的数组。
 - 若只传 1 个值，节点会自动扩展到 3 个轴。
+- C12 建议使用 `driver_name:=drv_udp_c12`、`device_ip:=192.168.144.108`、
+  `device_port:=5000`、`bind_port:=5000`。
 
 ## ROS 接口
 
@@ -279,6 +319,76 @@ ros2 service list | grep gimbal
 ros2 topic echo /gimbal/state
 ```
 
+### C12 调试流程
+
+建议先验证底层 C12 UDP 驱动，再验证 ROS 2 封装，便于区分是设备链路问题还是 ROS 接口问题。
+
+1. 确认网络连通：
+
+```bash
+ping 192.168.144.108
+```
+
+2. 使用底层组件示例程序验证 C12 驱动：
+
+```bash
+cd components/control/gimbal
+mkdir -p build
+cd build
+cmake ..
+make -j
+
+./test_gimbal_udp --driver drv_udp_c12 --ip 192.168.144.108 --port 5000 --bind-port 5000
+```
+
+底层驱动正常时，日志中应能看到 C12 初始化、命令发送和姿态反馈，例如：
+
+```text
+[GIMBAL-C12-UDP] Initialized driver 'drv_udp_c12'
+[GIMBAL-C12-UDP][TX-SKYDROID] ...
+[RX-STATE] pitch=... yaw=... roll=...
+```
+
+如果一直输出 `waiting feedback...`，通常说明还没有收到 C12 姿态反馈。优先确认
+`--bind-port 5000`、设备 IP、网口 IP、路由和防火墙。
+
+3. 启动 ROS 2 节点，确认使用的是 C12 驱动：
+
+```bash
+ros2 run control_gimbal_node gimbal_server_node \
+  --ros-args \
+  -p driver_name:=drv_udp_c12 \
+  -p bind_ip:=0.0.0.0 \
+  -p bind_port:=5000 \
+  -p device_ip:=192.168.144.108 \
+  -p device_port:=5000
+```
+
+4. 另开终端查看状态并调用服务：
+
+```bash
+source /opt/ros/humble/setup.bash
+source output/staging/setup.bash
+
+ros2 topic echo /gimbal/state
+ros2 service call /gimbal/set_mode control_gimbal_node/srv/SetGimbalMode "{mode: 1}"
+ros2 service call /gimbal/set_target control_gimbal_node/srv/SetGimbalTarget \
+  "{target: {pitch: -10.0, yaw: 10.0, roll: 0.0}}"
+```
+
+C12 验证通过的判断标准：
+
+- 节点 ready 日志显示 `driver=drv_udp_c12`。
+- `/gimbal/state` 持续发布，且收到反馈后 `has_feedback: true`、`status_code: 0`。
+- `/gimbal/set_mode`、`/gimbal/set_target` 返回 `success: true`。
+- 实体云台的 yaw/pitch 动作与命令方向一致。
+
+C12 当前能力说明：
+
+- C12 控制下发以 yaw/pitch 为主，roll 轴当前主要用于反馈解析。
+- `/gimbal/set_zoom` 在 C12 上映射为 DZM 数码变焦步进命令；`ZOOM_STOP` 不发送连续停止帧。
+- `speed_level` 对 C12 数码变焦暂不生效。
+
 ## 常见问题
 
 ### 1. 找不到 `control_gimbal_node`
@@ -320,15 +430,15 @@ Failed to find the following files:
 报错示例：
 
 ```text
-[GIMBAL] Driver not found: drv_udp_TZ0xxx
-[GIMBAL] No driver found: drv_udp_TZ0xxx
+[GIMBAL] Driver not found: drv_udp_tz0xxx
+[GIMBAL] No driver found: drv_udp_tz0xxx
 ```
 
 处理方法：
 
 - 确保当前版本已经包含驱动源码链接修复
 - 重新编译 `control_gimbal_node`
-- 若系统已安装 `libgimbal.so`，检查其是否确实包含 `drv_udp_TZ0xxx`
+- 若系统已安装 `libgimbal.so`，检查其是否确实包含 `drv_udp_tz0xxx`
 
 ### 4. 节点启动了，但没有反馈
 
@@ -346,6 +456,40 @@ ping 192.168.44.160
 ```
 
 并确认设备网络拓扑、端口、防火墙设置正确。
+
+### 5. C12 控制命令返回成功，但状态一直没有反馈
+
+可能原因：
+
+- C12 设备地址不是 `192.168.144.108:5000`
+- 本机没有配置到 `192.168.144.0/24` 网段
+- ROS 节点或底层测试程序没有绑定本地 `5000` 端口
+- 设备没有接受姿态主动输出使能命令
+- 防火墙拦截了 UDP 5000
+
+建议先用底层示例排查：
+
+```bash
+./test_gimbal_udp --driver drv_udp_c12 --ip 192.168.144.108 --port 5000 --bind-port 5000
+```
+
+如果底层示例也一直输出 `waiting feedback...`，优先排查网络和设备配置；如果底层示例有
+`[RX-STATE]`，但 ROS 2 中 `has_feedback` 仍为 `false`，再检查 ROS 节点启动参数是否仍在使用
+默认的 `drv_udp_tz0xxx` 或 `4900` 端口。
+
+### 6. C12 变焦或 roll 轴控制不符合预期
+
+C12 驱动当前将缩放接口映射为 DZM 数码变焦步进命令，不是连续光学变焦控制。
+`ZOOM_IN` 和 `ZOOM_OUT` 会分别发送一步数码变焦命令，`ZOOM_STOP` 直接返回成功但不发送帧。
+
+C12 当前主要支持 yaw/pitch 控制下发，roll 轴主要用于反馈解析。如果需要验证动作，建议先使用
+pitch/yaw 小角度命令，例如：
+
+```bash
+ros2 service call /gimbal/set_mode control_gimbal_node/srv/SetGimbalMode "{mode: 1}"
+ros2 service call /gimbal/set_target control_gimbal_node/srv/SetGimbalTarget \
+  "{target: {pitch: -10.0, yaw: 10.0, roll: 0.0}}"
+```
 
 ## 开发说明
 

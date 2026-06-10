@@ -43,7 +43,8 @@ if(GIMBAL_INCLUDE_DIR AND GIMBAL_LIB)
 elseif(EXISTS ${GIMBAL_COMPONENT_DIR}/include/gimbal.h)
   add_library(gimbal_component_fallback OBJECT
     ${GIMBAL_COMPONENT_DIR}/src/gimbal.c
-    ${GIMBAL_COMPONENT_DIR}/src/drivers/drv_udp_TZ0xxx.c
+    ${GIMBAL_COMPONENT_DIR}/src/drivers/drv_udp_tz0xxx.c
+    ${GIMBAL_COMPONENT_DIR}/src/drivers/drv_udp_c12.c
   )
   target_include_directories(gimbal_component_fallback PUBLIC
     ${GIMBAL_COMPONENT_DIR}/include
